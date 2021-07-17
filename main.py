@@ -9,6 +9,11 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.utils import to_categorical
 import os
+import csv
+import matplotlib.pyplot as plt
+
+pd.set_option('display.width', 200)
+
 
 #=====================================================#
 # CONFIGURATIONS
@@ -60,27 +65,34 @@ max_len_target = max((len(i) for i in target_sequences))
 print("Length of maximum output sequence :", max_len_target)
 
 
-# pad the sequences
-encoder_inputs = pad_sequences(input_sequences, maxlen=max_len_input)
-print("Encoder inputs shape :", encoder_inputs.shape)
 
-decoder_inputs = pad_sequences(target_sequences_inputs, maxlen=max_len_target, padding='post')
-decoder_targets = pad_sequences(target_sequences, maxlen=max_len_target, padding='post')
-print("Decoder inputs shape :", encoder_inputs.shape)
+#=====================================================#
+# CREATE THE PADDED INPUTS TO TRAIN THE MODEL
+#=====================================================#
+
+encoder_data = pad_sequences(input_sequences, maxlen=max_len_input)
+print("Encoder inputs shape :", encoder_data.shape)
+
+decoder_data = pad_sequences(target_sequences_inputs, maxlen=max_len_target, padding='post')
+decoder_targets_data = pad_sequences(target_sequences, maxlen=max_len_target, padding='post')
+print("Decoder inputs shape :", decoder_data.shape, decoder_targets_data.shape)
+
 
 #=====================================================#
 # LOAD THE WORD VECTORS
 #=====================================================#
 
-glove = {}
-with open(r'D:\Machine Learning\Glove\glove.6B.100d.txt', encoding="utf8") as f:
-    for line in f:
-        values = line.split()
-        word = values[0]
-        vector = np.asarray(values[1:], dtype='float32')
-        glove[word] = vector
+df_glove = pd.read_table(r'D:\Machine Learning\Glove\glove.6B.100d.txt',
+                         sep=' ',
+                         encoding="utf8",
+                         quoting=csv.QUOTE_NONE,
+                         header=None, index_col=[0])
 
-print("Loaded the Glove vectors")
+glove = df_glove.T.to_dict('list')
+glove = {key:np.asarray(val) for key, val in glove.items()}
+
+print("Loaded the Glove vectors. Total words : ", len(glove))
+
 
 #=====================================================#
 # PREPARE THE EMBEDDING MATRIX
@@ -89,28 +101,109 @@ print("Loaded the Glove vectors")
 matrix_rows = min(VOCAB_SIZE, num_words_input)
 embedding_matrix = np.zeros((matrix_rows, EMBEDDING_DIM))
 
-for word, i in tokenizer_inputs.word_index.items():
+for word, idx in tokenizer_inputs.word_index.items():
     embedding_vector = glove.get(word)
     if embedding_vector is not None:
-        embedding_matrix[i] = embedding_vector
+        embedding_matrix[idx] = embedding_vector
 
 print("Created the embedding matrix")
+
+
+# the following code is just to re-verify that the embedding matrix has been correctly created
+check_word = 'man'
+index_in_matrix = tokenizer_inputs.word_index[check_word]
+
+glove_vector = glove[check_word]
+embedding_vector = embedding_matrix[index_in_matrix]
+
+if np.array_equal(glove_vector, embedding_vector):
+    print(f"The glove and embedding arrays for '{check_word}' match!")
+else:
+    print("Problem!!!!")
+
 
 
 #=====================================================#
 # START BUILDING THE NEURAL NETWORK
 #=====================================================#
 
-# Create the embedding layer
-embedding_layer = Embedding(input_dim = matrix_rows, output_dim=EMBEDDING_DIM,
-                            weights=embedding_matrix,
-                            input_length=max_len_input)
+# Create decoded one-hot encoded targets
+#---------------------------------------
 
-# Create decoded one-hot encoded tagrets
-decoder_targets_one_hot = np.zeros((len(input_texts), max_len_target, num_words_output), dtype='float32')
+decoder_targets_one_hot = to_categorical(decoder_targets_data)
 print(decoder_targets_one_hot.shape)
 
-for i, d in enumerate(decoder_targets):
-    for t, word in enumerate(d):
-        decoder_targets_one_hot[i, t, word] = 1
 
+# Create the Encoder
+#-------------------
+
+encoder_input_layer = Input(shape=(max_len_input,))
+
+encoder_embedding_layer = Embedding(input_dim=matrix_rows, output_dim=EMBEDDING_DIM,
+                            weights=[embedding_matrix],
+                            input_length=max_len_input)
+
+encoder_LSTM_layer = LSTM(LATENT_DIM, return_state=True, dropout=0.5)
+
+x = encoder_input_layer
+x = encoder_embedding_layer(x)
+encoder_outputs, h, c = encoder_LSTM_layer(x)
+encoder_states = [h, c]
+
+
+# Create the decoder
+#-------------------
+
+decoder_input_layer = Input(shape=(max_len_target,))
+decoder_embedding_layer = Embedding(input_dim=num_words_output, output_dim=LATENT_DIM)
+decoder_LSTM_layer = LSTM(LATENT_DIM, return_sequences=True, return_state=True, dropout=0.5)
+decoder_dense_layer = Dense(num_words_output, activation='softmax')
+
+x = decoder_input_layer
+x = decoder_embedding_layer(x)
+decoder_temp_outputs, _, _ = decoder_LSTM_layer(x, initial_state=encoder_states)
+decoder_output_layer = decoder_dense_layer(decoder_temp_outputs)
+
+
+# Create the final model
+#-----------------------
+
+model = Model([encoder_input_layer, decoder_input_layer], decoder_output_layer)
+model.summary()
+
+# Compile the model
+#------------------
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+
+#=====================================================#
+# TRAIN THE NEURAL NETWORK
+#=====================================================#
+
+r = model.fit([encoder_data, decoder_data],
+              decoder_targets_one_hot,
+              batch_size=BATCH_SIZE,
+              epochs=20,
+              validation_split=0.2)
+
+#=====================================================#
+# PLOT THE METRICS
+#=====================================================#
+
+plt.plot(r.history['loss'], label='training loss')
+plt.plot(r.history['val_loss'], label='validation loss')
+plt.legend()
+plt.show()
+
+plt.plot(r.history['accuracy'], label='training accuracy')
+plt.plot(r.history['val_accuracy'], label='validation accuracy')
+plt.legend()
+plt.show()
+
+
+#=====================================================#
+# SAVE THE MODEL
+#=====================================================#
+
+model.save(r'D:\Machine Learning\Neural Machine Translation\se2seq_model')
