@@ -27,7 +27,7 @@ VOCAB_SIZE = 20000
 EMBEDDING_DIM = 100
 
 #=====================================================#
-# READ IN AND FORMAT THE DATA
+# READ IN THE DATA
 #=====================================================#
 
 # Read in the language file
@@ -36,17 +36,21 @@ df = df[[0,1]]
 df.columns = ['English','German']
 df = df.head(NUM_SAMPLES)
 
-input_texts = df['English'].to_list()
-target_texts = (df['German'] + " <EOS>").to_list()
-target_texts_inputs = ("<SOS> " + df['German']).to_list()
 
-print("Number of samples : ", len(input_texts))
+input_text = df['English'].to_list()
+output_text = (df['German'] + " <EOS>").to_list()
+target_input = ("<SOS> " + df['German']).to_list()
 
+print("Number of samples : ", len(input_text))
+
+#=====================================================#
+# PROCESS THE DATA FOR MODELING
+#=====================================================#
 
 # Tokenize the inputs
 tokenizer_inputs = Tokenizer(num_words=VOCAB_SIZE)
-tokenizer_inputs.fit_on_texts(input_texts)
-input_sequences = tokenizer_inputs.texts_to_sequences(input_texts)
+tokenizer_inputs.fit_on_texts(input_text)
+input_sequences = tokenizer_inputs.texts_to_sequences(input_text)
 
 num_words_input = len(tokenizer_inputs.word_index) + 1
 print("Size of input vocabulary :", num_words_input)
@@ -54,28 +58,25 @@ print("Size of input vocabulary :", num_words_input)
 max_len_input = max((len(i) for i in input_sequences))
 print("Length of maximum input sequence :", max_len_input)
 
+
 # Tokenize the outputs
 tokenizer_outputs = Tokenizer(num_words=VOCAB_SIZE, filters='')
-tokenizer_outputs.fit_on_texts(target_texts + target_texts_inputs)
-target_sequences = tokenizer_outputs.texts_to_sequences(target_texts)
-target_sequences_inputs = tokenizer_outputs.texts_to_sequences(target_texts_inputs)
+tokenizer_outputs.fit_on_texts(output_text + target_input)
+output_sequences = tokenizer_outputs.texts_to_sequences(output_text)
+target_sequences = tokenizer_outputs.texts_to_sequences(target_input)
 
 num_words_output = len(tokenizer_outputs.word_index) + 1
 max_len_target = max((len(i) for i in target_sequences))
 print("Length of maximum output sequence :", max_len_target)
 
 
-
-#=====================================================#
-# CREATE THE PADDED INPUTS TO TRAIN THE MODEL
-#=====================================================#
-
+# Pad the sequences
 encoder_data = pad_sequences(input_sequences, maxlen=max_len_input)
 print("Encoder inputs shape :", encoder_data.shape)
 
-decoder_data = pad_sequences(target_sequences_inputs, maxlen=max_len_target, padding='post')
-decoder_targets_data = pad_sequences(target_sequences, maxlen=max_len_target, padding='post')
-print("Decoder inputs shape :", decoder_data.shape, decoder_targets_data.shape)
+decoder_data = pad_sequences(output_sequences, maxlen=max_len_target, padding='post')
+target_data = pad_sequences(target_sequences, maxlen=max_len_target, padding='post')
+print("Decoder inputs shape :", decoder_data.shape, target_data.shape)
 
 
 #=====================================================#
@@ -128,20 +129,21 @@ else:
 #=====================================================#
 
 # Create decoded one-hot encoded targets
-#---------------------------------------
-
-decoder_targets_one_hot = to_categorical(decoder_targets_data)
-print(decoder_targets_one_hot.shape)
+decoder_OHE = to_categorical(decoder_data)
+print(decoder_OHE.shape)
 
 
+
+#---------------------------------
 # Create the Encoder
-#-------------------
+#---------------------------------
 
 encoder_input_layer = Input(shape=(max_len_input,))
 
-encoder_embedding_layer = Embedding(input_dim=matrix_rows, output_dim=EMBEDDING_DIM,
-                            weights=[embedding_matrix],
-                            input_length=max_len_input)
+encoder_embedding_layer = Embedding(input_dim=matrix_rows,
+                                    output_dim=EMBEDDING_DIM,
+                                    weights=[embedding_matrix],
+                                    input_length=max_len_input)
 
 encoder_LSTM_layer = LSTM(LATENT_DIM, return_state=True, dropout=0.5)
 
@@ -151,13 +153,18 @@ encoder_outputs, h, c = encoder_LSTM_layer(x)
 encoder_states = [h, c]
 
 
-# Create the decoder
-#-------------------
+#---------------------------------
+# Create the Decoder
+#---------------------------------
 
 decoder_input_layer = Input(shape=(max_len_target,))
+
 decoder_embedding_layer = Embedding(input_dim=num_words_output, output_dim=LATENT_DIM)
+
 decoder_LSTM_layer = LSTM(LATENT_DIM, return_sequences=True, return_state=True, dropout=0.5)
+
 decoder_dense_layer = Dense(num_words_output, activation='softmax')
+
 
 x = decoder_input_layer
 x = decoder_embedding_layer(x)
@@ -182,7 +189,7 @@ model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accur
 #=====================================================#
 
 r = model.fit([encoder_data, decoder_data],
-              decoder_targets_one_hot,
+              decoder_OHE,
               batch_size=BATCH_SIZE,
               epochs=20,
               validation_split=0.2)
@@ -206,4 +213,4 @@ plt.show()
 # SAVE THE MODEL
 #=====================================================#
 
-model.save(r'D:\Machine Learning\Neural Machine Translation\se2seq_model')
+model.save('Model\se2seq_base_model')
