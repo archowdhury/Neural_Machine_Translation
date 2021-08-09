@@ -3,7 +3,7 @@
 #=====================================================#
 import pandas as pd
 import numpy as np
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import LSTM, Dense, Input, Embedding
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
@@ -194,6 +194,10 @@ r = model.fit([encoder_data, decoder_data],
               epochs=20,
               validation_split=0.2)
 
+# Load the model if using a previous trained one
+model = load_model('Model\se2seq_base_model')
+
+
 #=====================================================#
 # PLOT THE METRICS
 #=====================================================#
@@ -214,3 +218,81 @@ plt.show()
 #=====================================================#
 
 model.save('Model\se2seq_base_model')
+
+
+#=====================================================#
+# BUILD THE INFERENCE PART
+#=====================================================#
+
+# NOTE : We are not going to 'train' the model in this step. This just uses
+# the weights already learnt in the trained layers to infer the translation
+
+# encoder
+encoder_model = Model(encoder_input_layer, encoder_states)
+
+# decoder
+decoder_state_input_h = Input(shape=(LATENT_DIM,))
+decoder_state_input_c = Input(shape=(LATENT_DIM,))
+decoder_state_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+decoder_inputs_single = Input(shape=(1,))
+decoder_inputs_single_x = decoder_embedding_layer(decoder_inputs_single)
+
+decoder_outputs, h, c = decoder_LSTM_layer(decoder_inputs_single_x, initial_state=decoder_state_inputs)
+
+decoder_states = [h,c]
+decoder_outputs = decoder_dense_layer(decoder_outputs)
+
+# make the inference model
+decoder_model = Model([decoder_inputs_single] + decoder_state_inputs,
+                      [decoder_outputs] + decoder_states)
+
+# print the model summary
+decoder_model.summary()
+
+
+#=====================================================#
+# BUILD THE INFERENCE PART
+#=====================================================#
+
+# get the word-to-index and index-to-word mappings
+word2idx_outputs = tokenizer_outputs.word_index
+
+idx2word_eng = {v:k for k, v in tokenizer_inputs.word_index.items()}
+idx2word_trans = {v:k for k, v in tokenizer_outputs.word_index.items()}
+
+
+def decode_sequence(input_seq):
+
+    states_values = encoder_model.predict(input_seq)
+    target_seq = np.zeros((1,1))
+
+    target_seq[0,0] = word2idx_outputs['<sos>']
+
+    output_sentence = []
+    for _ in range(max_len_target):
+        output_tokens, h, c = decoder_model.predict([target_seq] + states_values)
+
+        # get next word
+        idx = np.argmax(output_tokens[0,0,:])
+
+        if idx == word2idx_outputs['<eos>']:
+            break
+
+        word = ''
+        if idx > 0:
+            word = idx2word_trans[idx]
+            output_sentence.append(word)
+
+        target_seq[0,0] = idx
+        states_values = [h, c]
+
+    return ' '.join(output_sentence)
+
+
+i = np.random.choice(len(input_text))
+input_seq = encoder_data[i:i+1]
+translation = decode_sequence(input_seq)
+
+print("Input : ", input_text[i])
+print("Translation : ", translation)
