@@ -20,7 +20,6 @@ from sklearn.model_selection import train_test_split
 
 EMBEDDING_DIM = 300
 
-
 # ==============================================================#
 # READ IN THE DATA
 # ==============================================================#
@@ -29,6 +28,7 @@ EMBEDDING_DIM = 300
 df = pd.read_table("Data/deu.txt", sep="\t", header=None)
 df = df.iloc[:, [0, 1]]
 df.columns = ['English', 'German']
+df = df.head(2000)
 df.head()
 
 # The contractions file
@@ -127,7 +127,7 @@ encoder_inputs = Input(shape=(ENG_MAX_LEN,))
 encoder_embedding = Embedding(ENG_VOCAB_SIZE, EMBEDDING_DIM)(encoder_inputs)
 
 # Bidirectional LSTM layer
-encoder_LSTM = Bidirectional(LSTM(256, return_sequences=True, return_state=True))
+encoder_LSTM = Bidirectional(LSTM(15, return_sequences=True, return_state=True))
 
 # Encoder outputs
 encoder_outputs1, fwd_state_h, fwd_state_c, bck_state_h, bck_state_c = encoder_LSTM(encoder_embedding)
@@ -151,7 +151,7 @@ decoder_inputs = Input(shape=(None,))
 decoder_embedding = Embedding(GER_VOCAB_SIZE, EMBEDDING_DIM)(decoder_inputs)
 
 # Decoder LSTM
-decoder_LSTM = LSTM(512, return_sequences=True, return_state=True)
+decoder_LSTM = LSTM(30, return_sequences=True, return_state=True)
 
 # Decoder outputs
 decoder_outputs, _, _ = decoder_LSTM(decoder_embedding, initial_state=encoder_states)
@@ -201,9 +201,9 @@ encoder_input_test = X_test
 decoder_input_test = y_test[:,:-1]
 decoder_target_test= y_test[:,1:]
 
-EPOCHS= 50 #@param {type:'slider',min:10,max:100, step:10 }
+EPOCHS= 30 #@param {type:'slider',min:10,max:100, step:10 }
 history = model.fit([encoder_input_data, decoder_input_data],decoder_target_data,
                     epochs=EPOCHS,
-                    batch_size=128,
+                    batch_size=32,
                     validation_data = ([encoder_input_test, decoder_input_test],decoder_target_test),
                     callbacks= callbacks_list)
